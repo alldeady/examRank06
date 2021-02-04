@@ -16,31 +16,24 @@ typedef struct		s_client {
 t_client			*g_clients;
 fd_set				curr_sock, cpy_read, cpy_write;
 int					sock_fd, g_id = 0;
-char				str[4096], buf[4096 + 42];
+char				str[4096], tmp[4096], buf[4096 + 42];
 
 void	fatal(void) {
 	write(2, "Fatal error\n", strlen("Fatal error\n"));
+	close(sock_fd);
 	exit(1);
 }
 
-int		get_max_fd(void) {
+void	send_all(int fd, char *strP) {
 	t_client	*it = g_clients;
-	int			max = 0;
 
-	if (!g_clients)
-		return (sock_fd);
 	while (it) {
-		max < it->fd ? max = it->fd: max;
+		if (FD_ISSET(it->fd, &cpy_write))
+			if (it->fd != fd)
+				if (send(it->fd, strP, strlen(strP), 0) < 0)
+					fatal();
 		it = it->next;
 	}
-	return (max);
-}
-
-void	send_all(int i, char *strP) {
-	for (int fd = 0; fd <= get_max_fd(); fd++)
-		if (FD_ISSET(fd, &cpy_write))
-			if (fd != i && fd != sock_fd)
-				send(fd, strP, 4096, 0);
 }
 
 int		add_client_to_list(int fd) {
@@ -104,6 +97,34 @@ int		get_id(int fd) {
 	return (it ? it->id: -1);
 }
 
+void	ex_msg(int fd) {
+	int	i = -1, j = 0;
+
+	while (str[++i]) {
+		tmp[j++] = str[i];
+		if (str[i] == '\n') {
+			sprintf(buf, "client %d: %s", get_id(fd), tmp);
+			send_all(fd, buf);
+			j = 0;
+			bzero(&tmp, 4096);
+			bzero(&buf, 4096 + 42);
+		}
+	}
+}
+
+int		get_max_fd(void) {
+	t_client	*it = g_clients;
+	int			max = 0;
+
+	if (!g_clients)
+		return (sock_fd);
+	while (it) {
+		max < it->fd ? max = it->fd: max;
+		it = it->next;
+	}
+	return (max);
+}
+
 int		main(int ac, char **av) {
 	if (ac != 2) {
 		write(2, "Wrong number of arguments\n", strlen("Wrong number of arguments\n"));
@@ -132,10 +153,12 @@ int		main(int ac, char **av) {
 	while (1) {
 		cpy_read = cpy_write = curr_sock;
 		if (select(get_max_fd() + 1, &cpy_read, &cpy_write, NULL, NULL) < 0)
-			fatal();
+			continue ;
 		for (int i = 0; i <= get_max_fd(); i++) {
 			if (FD_ISSET(i, &cpy_read)) {
 				bzero(&str, 4096);
+				bzero(&tmp, 4096);
+				bzero(&buf, 4096 + 42);
 				if (i == sock_fd) {
 					add_client();
 					break ;
@@ -145,11 +168,8 @@ int		main(int ac, char **av) {
 						send_all(i, str);
 						FD_CLR(i, &curr_sock);
 						close(i);
-					} else {
-						bzero(&buf, 4096 + 42);
-						sprintf(buf, "client %d: %s", get_id(i), str);
-						send_all(i, buf);
-					}
+					} else
+						ex_msg(i);
 				}
 			}
 		}
