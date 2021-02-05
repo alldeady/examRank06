@@ -1,104 +1,51 @@
-#include <errno.h>
 #include <string.h>
 #include <unistd.h>
-#include <netdb.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <sys/select.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/select.h>
 
 typedef struct		s_client {
-	int				id, fd;
+	int				fd, id;
 	struct s_client	*next;
 }					t_client;
 
 t_client			*g_clients;
 fd_set				curr_sock, cpy_read, cpy_write;
 int					sock_fd, g_id = 0;
-char				str[4096], tmp[4096], buf[4096 + 42];
+char				str[32*4096], tmp[32*4096], buf[32*4096 + 42];
 
-void	fatal(void) {
+void	fatal() {
 	write(2, "Fatal error\n", strlen("Fatal error\n"));
 	close(sock_fd);
 	exit(1);
 }
 
-void	send_all(int fd, char *strP) {
-	t_client	*it = g_clients;
-
-	while (it) {
-		if (FD_ISSET(it->fd, &cpy_write))
-			if (it->fd != fd)
-				if (send(it->fd, strP, strlen(strP), 0) < 0)
-					fatal();
-		it = it->next;
-	}
-}
-
-int		add_client_to_list(int fd) {
-	t_client	*new, *it;
-
-	if (!(new = calloc(1, sizeof(t_client))))
-		fatal();
-	new->id = g_id++;
-	new->fd = fd;
-	if (!g_clients)
-		g_clients = new;
-	else {
-		it = g_clients;
-		while (it && it->next)
-			it = it->next;
-		it->next = new;
-	}
-	return (new->id);
-}
-
-void	add_client(void) {
-	struct sockaddr_in	client_addr;
-	socklen_t			len = sizeof(client_addr);
-	int					client_fd;
-
-	if ((client_fd = accept(sock_fd, (struct sockaddr *)&client_addr, &len)) < 0)
-		fatal();
-
-	sprintf(str, "server: client %d just arrived\n", add_client_to_list(client_fd));
-	send_all(client_fd, str);
-
-	FD_SET(client_fd, &curr_sock);
-}
-
-int		rm_client(int fd) {
-	t_client	*it = g_clients, *del;
-	int			id = -1;
-
-	if (g_clients) {
-		if (it->fd == fd) {
-			id = it->id;
-			g_clients = it->next;
-			free(it);
-		} else {
-			while (it && it->next->fd != fd)
-				it = it->next;
-			id = it->next->id;
-			del = it->next;
-			it->next = it->next->next;
-			free(del);
-		}
-	}
-	return (id);
+void	send_all(int fd, char *str_req) {
+	for (t_client *it = g_clients; it; it = it->next)
+		if (FD_ISSET(it->fd, &cpy_write) && it->fd != fd)
+			if (send(it->fd, str_req, strlen(str_req), 0) < 0)
+				fatal();
 }
 
 int		get_id(int fd) {
-	t_client	*it = g_clients;
+	for (t_client *it = g_clients; it; it = it->next)
+		if (it->fd == fd)
+			return (it->id);
+	return (-1);
+}
 
-	while (it && it->fd != fd)
-		it = it->next;
-	return (it ? it->id: -1);
+int		get_max_fd() {
+	int	max = sock_fd;
+
+	for (t_client *it = g_clients; it; it = it->next)
+		max = max < it->fd ? it->fd: max;
+	return (max);
 }
 
 void	ex_msg(int fd) {
-	int	i = -1, j = 0;
+	int		i = -1, j = 0;
 
 	while (str[++i]) {
 		tmp[j++] = str[i];
@@ -106,23 +53,55 @@ void	ex_msg(int fd) {
 			sprintf(buf, "client %d: %s", get_id(fd), tmp);
 			send_all(fd, buf);
 			j = 0;
-			bzero(&tmp, 4096);
-			bzero(&buf, 4096 + 42);
+			bzero(&tmp, strlen(tmp));
+			bzero(&buf, strlen(buf));
 		}
 	}
 }
 
-int		get_max_fd(void) {
-	t_client	*it = g_clients;
-	int			max = 0;
+int		add_client_to_list(int fd) {
+	t_client	*it = g_clients, *new;
 
-	if (!g_clients)
-		return (sock_fd);
-	while (it) {
-		max < it->fd ? max = it->fd: max;
-		it = it->next;
+	if (!(new = calloc(1, sizeof(t_client))))
+		fatal();
+	new->id = g_id++;
+	new->fd = fd;
+	if (!g_clients) {
+		g_clients = new;
+	} else {
+		while (it->next)
+			it = it->next;
+		it->next = new;
 	}
-	return (max);
+	return (new->id);
+}
+
+void	add_client() {
+	struct sockaddr_in	clientaddr;
+	int					len = sizeof(clientaddr), client_fd;
+
+	if ((client_fd = accept(sock_fd, (struct sockaddr *)&clientaddr, &len)) < 0)
+		fatal();
+	sprintf(str, "server: client %d just arrived\n", add_client_to_list(client_fd));
+	send_all(client_fd, str);
+	FD_SET(client_fd, &curr_sock);
+}
+
+int		rm_client(int fd) {
+	t_client	*it = g_clients, *del;
+	int			id = get_id(fd);
+
+	if (it->fd == fd) {
+		g_clients = it->next;
+		free(it);
+	} else {
+		while (it->next && it->next->fd != fd)
+			it = it->next;
+		del = it->next;
+		it->next = it->next->next;
+		free(del);
+	}
+	return (id);
 }
 
 int		main(int ac, char **av) {
@@ -131,49 +110,48 @@ int		main(int ac, char **av) {
 		exit(1);
 	}
 
+	struct sockaddr_in	servaddr;
+	uint16_t			port = atoi(av[1]);
+	bzero(&servaddr, sizeof(servaddr));
+	servaddr.sin_family = AF_INET;
+	servaddr.sin_addr.s_addr = 127 | (1 << 24);
+	servaddr.sin_port = port >> 8 | port << 8;
+
 	if ((sock_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		fatal();
-
-	struct sockaddr_in	serv_addr;
-	uint32_t			host = 2130706433;
-	uint16_t			port = atoi(av[1]);
-	bzero(&serv_addr, sizeof(serv_addr));
-	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_addr.s_addr = host >> 24 | host << 24;
-	serv_addr.sin_port = port >> 8 | port << 8;
-
-	if (bind(sock_fd, (const struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+	if (bind(sock_fd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0)
 		fatal();
 	if (listen(sock_fd, 0) < 0)
 		fatal();
 
 	FD_ZERO(&curr_sock);
 	FD_SET(sock_fd, &curr_sock);
+	bzero(&tmp, sizeof(tmp));
+	bzero(&buf, sizeof(buf));
+	bzero(&str, sizeof(str));
 
-	while (1) {
-		cpy_read = cpy_write = curr_sock;
+	while (420) {
+		cpy_write = cpy_read = curr_sock;
 		if (select(get_max_fd() + 1, &cpy_read, &cpy_write, NULL, NULL) < 0)
 			continue ;
-		for (int i = 0; i <= get_max_fd(); i++) {
-			if (FD_ISSET(i, &cpy_read)) {
-				bzero(&str, 4096);
-				bzero(&tmp, 4096);
-				bzero(&buf, 4096 + 42);
-				if (i == sock_fd) {
+		for (int fd = 0; fd <= get_max_fd(); fd++) {
+			if (FD_ISSET(fd, &cpy_read)) {
+				bzero(&str, strlen(str));
+				if (fd == sock_fd) {
 					add_client();
 					break ;
 				} else {
-					if (recv(i, str, 4096, 0) <= 0) {
-						sprintf(str, "server: client %d just left\n", rm_client(i));
-						send_all(i, str);
-						FD_CLR(i, &curr_sock);
-						close(i);
+					if (recv(fd, str, sizeof(str), 0) <= 0) {
+						sprintf(str, "server: client %d just left\n", rm_client(fd));
+						send_all(fd, str);
+						FD_CLR(fd, &curr_sock);
+						close(fd);
+						break ;
 					} else
-						ex_msg(i);
+						ex_msg(fd);
 				}
 			}
 		}
 	}
-	close(sock_fd);
 	return (0);
 }
