@@ -128,7 +128,6 @@ int		main(int ac, char **av) {
 	FD_SET(sock_fd, &curr_sock);
 	bzero(&tmp, sizeof(tmp));
 	bzero(&buf, sizeof(buf));
-	bzero(&str, sizeof(str));
 
 	while (420) {
 		cpy_write = cpy_read = curr_sock;
@@ -136,7 +135,7 @@ int		main(int ac, char **av) {
 			continue ;
 		for (int fd = 0; fd <= get_max_fd(); fd++) {
 			if (FD_ISSET(fd, &cpy_read)) {
-				bzero(&str, strlen(str));
+				bzero(&str, sizeof(str));
 				if (fd == sock_fd) {
 					add_client();
 					break ;
