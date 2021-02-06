@@ -14,7 +14,7 @@ typedef struct		s_client {
 t_client			*g_clients;
 fd_set				curr_sock, cpy_read, cpy_write;
 int					sock_fd, g_id = 0;
-char				str[32*4096], tmp[32*4096], buf[32*4096 + 42];
+char				str[42*4096], tmp[42*4096], buf[42*4096 + 42], msg[42];
 
 void	fatal() {
 	write(2, "Fatal error\n", strlen("Fatal error\n"));
@@ -57,6 +57,7 @@ void	ex_msg(int fd) {
 			bzero(&buf, strlen(buf));
 		}
 	}
+	bzero(&str, strlen(str));
 }
 
 int		add_client_to_list(int fd) {
@@ -82,8 +83,8 @@ void	add_client() {
 
 	if ((client_fd = accept(sock_fd, (struct sockaddr *)&clientaddr, &len)) < 0)
 		fatal();
-	sprintf(str, "server: client %d just arrived\n", add_client_to_list(client_fd));
-	send_all(client_fd, str);
+	sprintf(msg, "server: client %d just arrived\n", add_client_to_list(client_fd));
+	send_all(client_fd, msg);
 	FD_SET(client_fd, &curr_sock);
 }
 
@@ -128,6 +129,7 @@ int		main(int ac, char **av) {
 	FD_SET(sock_fd, &curr_sock);
 	bzero(&tmp, sizeof(tmp));
 	bzero(&buf, sizeof(buf));
+	bzero(&str, sizeof(str));
 
 	while (420) {
 		cpy_write = cpy_read = curr_sock;
@@ -135,14 +137,15 @@ int		main(int ac, char **av) {
 			continue ;
 		for (int fd = 0; fd <= get_max_fd(); fd++) {
 			if (FD_ISSET(fd, &cpy_read)) {
-				bzero(&str, sizeof(str));
 				if (fd == sock_fd) {
+					bzero(&msg, sizeof(msg));
 					add_client();
 					break ;
 				} else {
 					if (recv(fd, str, sizeof(str), 0) <= 0) {
-						sprintf(str, "server: client %d just left\n", rm_client(fd));
-						send_all(fd, str);
+						bzero(&msg, sizeof(msg));
+						sprintf(msg, "server: client %d just left\n", rm_client(fd));
+						send_all(fd, msg);
 						FD_CLR(fd, &curr_sock);
 						close(fd);
 						break ;
